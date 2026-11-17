@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -19,6 +20,8 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
+BUILD = 'single-menu-2'
+clicked_message_id = ContextVar('clicked_message_id', default=None)
 dp = Dispatcher()
 store = None
 bot = None
@@ -51,19 +54,23 @@ def banner():
 async def screen(uid, text, reply_markup, photo=None):
     """One durable media message; changing media also replaces its caption/buttons."""
     user = store.data['users'][str(uid)]
-    message_id = user.get('screen_message_id')
+    clicked = clicked_message_id.get()
+    message_id = clicked if clicked is not None else user.get('screen_message_id')
     upload = BufferedInputFile(photo if photo is not None else banner(), filename='screen.png')
     if message_id:
         try:
             result = await bot.edit_message_media(
                 chat_id=uid, message_id=message_id,
                 media=InputMediaPhoto(media=upload, caption=text), reply_markup=reply_markup)
+            with store.change() as data:
+                data['users'][str(uid)]['screen_message_id'] = message_id
             return result
         except TelegramBadRequest as exc:
             if 'message is not modified' in exc.message.lower():
                 from types import SimpleNamespace
                 return SimpleNamespace(message_id=message_id)
-            if 'message to edit not found' not in exc.message.lower():
+            # A button click must NEVER create a replacement message.
+            if clicked is not None or 'message to edit not found' not in exc.message.lower():
                 raise
     result = await bot.send_photo(uid, photo=upload, caption=text, reply_markup=reply_markup)
     with store.change() as data:
@@ -137,6 +144,18 @@ async def navigate(query):
     if not query.message or query.message.chat.type != 'private':
         await query.answer()
         return
+    token = clicked_message_id.set(query.message.message_id)
+    try:
+        await navigate_current(query)
+    except TelegramBadRequest:
+        log.exception('Cannot edit clicked menu message; no replacement sent')
+    finally:
+        clicked_message_id.reset(token)
+
+async def navigate_current(query):
+    if not query.message or query.message.chat.type != 'private':
+        await query.answer()
+        return
     uid = query.from_user.id
     if str(uid) not in store.data['users']:
         await query.answer('Сначала нажмите /start', show_alert=True)
@@ -167,6 +186,7 @@ async def navigate(query):
 async def admin(message):
     if message.from_user.id not in ADMINS:
         return
+    await message.answer(f'Версия: {BUILD}')
     assigned = sum(owner is not None for owner in store.data['codes'].values())
     uncertain = sum(i['status'] == 'uncertain' for i in store.data['invitations'].values())
     await message.answer(f"Кодов: {len(store.data['codes'])}. Выдано: {assigned}. Осталось: {len(store.data['codes'])-assigned}. Спорных приглашений: {uncertain}.\nДля загрузки отправьте сюда файл .xlsx: первый лист, столбец A, начиная со второй строки.")
@@ -205,6 +225,7 @@ async def worker():
 async def main():
     global store, bot
     store = Store(os.getenv('DATA_DIR', '/app/data'))
+    log.info('Starting %s', BUILD)
     bot = Bot(os.environ['BOT_TOKEN'])
     task = asyncio.create_task(worker())
     try:
