@@ -13,7 +13,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
             data['users']['2']={}
         self.store.import_codes(['ABCD1234','ABCD5678'])
         self.store.assign(2)
-        panel.app=SimpleNamespace(store=self.store,ADMINS={1},BUILD='test',event=AsyncMock(),banner=lambda:b'image',bot=SimpleNamespace(send_message=AsyncMock(),edit_message_media=AsyncMock(),send_photo=AsyncMock(return_value=SimpleNamespace(message_id=101))))
+        panel.app=SimpleNamespace(store=self.store,ADMINS={1},BUILD='test',event=AsyncMock(),retire_menu=AsyncMock(),navigation_keys=AsyncMock(),banner=lambda:b'image',bot=SimpleNamespace(send_message=AsyncMock(),edit_message_media=AsyncMock(),send_photo=AsyncMock(return_value=SimpleNamespace(message_id=101))))
         panel.pending.clear()
         self.message=SimpleNamespace(message_id=100,chat=SimpleNamespace(id=1,type='private'),answer=AsyncMock(),answer_document=AsyncMock())
 
@@ -64,7 +64,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(panel.app.bot.edit_message_media.await_count,7)
         self.assertTrue(all(call.kwargs['message_id']==100 for call in panel.app.bot.edit_message_media.call_args_list))
 
-    async def test_admin_command_and_input_reuse_saved_message(self):
+    async def test_admin_command_and_input_create_new_panel(self):
         self.message.from_user=SimpleNamespace(id=1)
         await panel.admin(self.message)
         panel.app.bot.send_photo.assert_awaited_once()
@@ -72,18 +72,18 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         panel.pending[1]={'input':'threshold'}
         self.message.text='25'
         await panel.input_value(self.message)
-        panel.app.bot.send_photo.assert_awaited_once()
-        self.assertEqual(panel.app.bot.edit_message_media.call_args.kwargs['message_id'],101)
+        panel.app.retire_menu.assert_awaited()
+        self.assertEqual(panel.app.bot.send_photo.await_count,3)
         self.assertEqual(panel.pending[1],{'key':'threshold','value':25})
 
-    async def test_image_preview_uses_same_message(self):
+    async def test_image_preview_returns_panel_to_bottom(self):
         with self.store.change() as data:data['admin_screens']={'1':100}
         self.message.from_user=SimpleNamespace(id=1)
         self.message.text=None
         self.message.photo=[SimpleNamespace(file_id='image-file-id')]
         panel.pending[1]={'input':'image:Главное меню'}
         await panel.input_value(self.message)
-        panel.app.bot.send_photo.assert_not_called()
-        self.assertEqual(panel.app.bot.edit_message_media.call_args.kwargs['media'].media,'image-file-id')
+        panel.app.bot.send_photo.assert_awaited_once()
+        self.assertEqual(panel.app.bot.send_photo.call_args.kwargs['photo'],'image-file-id')
 
 if __name__=='__main__':unittest.main()

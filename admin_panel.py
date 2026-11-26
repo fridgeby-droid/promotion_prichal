@@ -22,6 +22,9 @@ async def show(message, text, reply_markup=None, photo=None):
         return
     clicked = active_message.get()
     message_id = clicked or app.store.data.get('admin_screens', {}).get(str(uid))
+    if clicked is None:
+        await app.retire_menu(uid)
+        message_id = None
     media = InputMediaPhoto(media=photo or BufferedInputFile(app.banner(), filename='admin.png'), caption=text)
     markup = reply_markup or keyboard([('В админ-меню', 'home')])
     if message_id:
@@ -85,12 +88,8 @@ async def home(message, notice=""):
 @router.message(Command('admin'), F.chat.type=='private')
 async def admin(message):
     if message.from_user.id in app.ADMINS:
+        await app.navigation_keys(message.from_user.id)
         pending.pop(message.from_user.id,None)
-        uid = str(message.from_user.id)
-        client_id = app.store.data['users'].get(uid, {}).get('screen_message_id')
-        if client_id:
-            with app.store.change() as data:
-                data.setdefault('admin_screens', {})[uid] = client_id
         await home(message)
 
 @router.callback_query(F.data.startswith('a:'))

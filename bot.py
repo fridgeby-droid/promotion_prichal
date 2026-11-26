@@ -15,12 +15,13 @@ from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InputMediaPhoto
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from PIL import Image, ImageDraw, ImageFont
 from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, InlineKeyboardMarkup as Keyboard
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'admin-panel-3'
+BUILD = 'menu-flow-1'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -57,12 +58,33 @@ def banner():
     image.save(output, format='PNG')
     return output.getvalue()
 
-async def screen(uid, text, reply_markup, photo=None):
+async def retire_menu(uid):
+    ids = {store.data['users'].get(str(uid), {}).get('screen_message_id'), store.data.get('admin_screens', {}).get(str(uid))}
+    for message_id in ids - {None}:
+        try:
+            await bot.edit_message_reply_markup(chat_id=uid, message_id=message_id, reply_markup=None)
+        except TelegramBadRequest as exc:
+            if not any(s in exc.message.lower() for s in ('message is not modified', 'message to edit not found', 'message can\'t be edited')):
+                raise
+
+async def navigation_keys(uid):
+    role = 'admin' if uid in ADMINS else 'user'
+    if store.data.get('navigation_keys', {}).get(str(uid)) == role:
+        return
+    labels = ['Главное меню'] + (['Админ-панель'] if uid in ADMINS else [])
+    await bot.send_message(uid, 'Кнопки под полем ввода возвращают меню вниз.', reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=s) for s in labels]], resize_keyboard=True, is_persistent=True))
+    with store.change() as data:
+        data.setdefault('navigation_keys', {})[str(uid)] = role
+
+async def screen(uid, text, reply_markup, photo=None, fresh=False):
     """One durable media message; changing media also replaces its caption/buttons."""
     text = panel.config('text:'+text,text)
     user = store.data['users'][str(uid)]
     clicked = clicked_message_id.get()
     message_id = clicked if clicked is not None else user.get('screen_message_id')
+    if fresh:
+        await retire_menu(uid)
+        message_id = None
     page = user.get('page','Главное меню')
     custom = panel.config('image:'+page,'')
     if photo is not None and custom:
@@ -161,19 +183,19 @@ async def coupon(uid):
     await panel.low_stock()
 
 @dp.message(CommandStart(), F.chat.type == 'private')
+@dp.message(F.text == 'Главное меню', F.chat.type == 'private')
 async def start(message):
     uid = message.from_user.id
     # Leave editor mode and switch the visible admin screen to the client menu.
     panel.pending.pop(uid, None)
-    payload = message.text.partition(' ')[2][:64]
+    payload = message.text.partition(' ')[2][:64] if message.text.startswith('/start') else ''
     with store.change() as data:
         user = data['users'].setdefault(str(uid), dict(source=payload, created_at=time.time()))
         user.update(username=message.from_user.username, first_name=message.from_user.first_name, last_seen=time.time())
-        if uid in ADMINS and data.get('admin_screens', {}).get(str(uid)):
-            user['screen_message_id'] = data['admin_screens'][str(uid)]
     with store.change() as data: data['users'][str(uid)]['page']='Главное меню'
     await event(uid, 'start')
-    await screen(uid, 'Главное меню', reply_markup=menu())
+    await navigation_keys(uid)
+    await screen(uid, 'Главное меню', reply_markup=menu(), fresh=True)
 
 @dp.callback_query()
 async def navigate(query):
@@ -225,6 +247,7 @@ async def navigate_current(query):
             await screen(uid, 'Раздел доставки пока в разработке. Здесь появятся условия, когда всё будет готово.', reply_markup=keyboard(BACK))
 
 @dp.message(Command('admin'), F.chat.type == 'private')
+@dp.message(F.text == 'Админ-панель', F.chat.type == 'private')
 async def admin(message):
     await panel.admin(message)
 
