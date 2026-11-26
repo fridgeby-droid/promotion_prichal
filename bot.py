@@ -20,7 +20,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'admin-panel-1'
+BUILD = 'admin-panel-2'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -223,11 +223,11 @@ async def admin(message):
 @dp.message(F.document, F.chat.type == 'private')
 async def upload(message):
     if message.from_user.id not in ADMINS:
-        await message.answer('Загрузка доступна только администратору.')
+        await panel.show(message, 'Загрузка доступна только администратору.')
         return
     document = message.document
     if not (document.file_name or '').lower().endswith('.xlsx') or (document.file_size or 0) > 5*1024*1024:
-        await message.answer('Нужен файл .xlsx размером до 5 МБ.')
+        await panel.show(message, 'Нужен файл .xlsx размером до 5 МБ.')
         return
     content = io.BytesIO()
     await bot.download(document, destination=content)
@@ -235,7 +235,7 @@ async def upload(message):
         codes = read_codes(content.getvalue())
     except Exception as exc:
         log.warning('Invalid workbook: %s', type(exc).__name__)
-        await message.answer(str(exc) if isinstance(exc, ValueError) else 'Не удалось прочитать Excel. Проверьте формат .xlsx.')
+        await panel.show(message, str(exc) if isinstance(exc, ValueError) else 'Не удалось прочитать Excel. Проверьте формат .xlsx.')
         return
     before=set(store.data['codes'])
     added = store.import_codes(codes)
@@ -245,7 +245,7 @@ async def upload(message):
         panel.audit(data,message.from_user.id,'import '+batch+': '+str(added))
     await panel.low_stock()
     await event(message.from_user.id, 'codes_imported', str(added))
-    await message.answer(f'Добавлено: {added}. Дубликатов пропущено: {len(codes)-added}. Ранее выданные коды сохранены.')
+    await panel.show(message, f'Добавлено: {added}. Дубликатов пропущено: {len(codes)-added}. Ранее выданные коды сохранены.')
 
 @dp.message(F.chat.type=='private')
 async def admin_input(message):
