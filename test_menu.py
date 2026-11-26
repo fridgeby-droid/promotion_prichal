@@ -22,7 +22,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.bot = SimpleNamespace(edit_message_media=AsyncMock(return_value=SimpleNamespace(message_id=42)), send_photo=AsyncMock(return_value=SimpleNamespace(message_id=99)))
         tree = ast.parse(Path(__file__).with_name('bot.py').read_text(encoding='utf-8'))
         screen = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'screen')
-        namespace = dict(store=self.store, bot=self.bot, clicked_message_id=self.clicked, banner=lambda: b'banner', BufferedInputFile=lambda *a, **k: a[0], InputMediaPhoto=lambda **k: k, TelegramBadRequest=BadRequest)
+        namespace = dict(panel=SimpleNamespace(config=lambda key, default=None: default), store=self.store, bot=self.bot, clicked_message_id=self.clicked, banner=lambda: b'banner', BufferedInputFile=lambda *a, **k: a[0], InputMediaPhoto=lambda **k: k, TelegramBadRequest=BadRequest)
         exec(compile(ast.Module(body=[screen], type_ignores=[]), 'bot.py', 'exec'), namespace)
         self.screen = namespace['screen']
 

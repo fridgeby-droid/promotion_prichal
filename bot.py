@@ -20,9 +20,13 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'single-menu-2'
+BUILD = 'admin-panel-1'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
+import admin_panel as panel
+import sys
+panel.app = sys.modules[__name__]
 dp = Dispatcher()
+dp.include_router(panel.router)
 store = None
 bot = None
 bot_name = None
@@ -30,18 +34,20 @@ ADMINS = {int(x) for x in os.getenv('ADMIN_IDS', '').split(',') if x.strip()}
 LABELS = ['Забрать подарок', 'Оформить клубную карту', 'Новогодний розыгрыш', 'Наши магазины', 'Наш канал', 'Связаться с нами', 'Доставка\nВ разработке']
 
 def link(label, key):
-    url = os.getenv(key, '').strip()
+    url = panel.config('url:'+key, os.getenv(key, '')).strip()
+    label = panel.config('button:'+label,label)
     if urlparse(url).scheme == 'https' and urlparse(url).netloc:
         return Button(text=label, url=url)
     return Button(text=label, callback_data='missing')
 
 def keyboard(*buttons):
-    return Keyboard(inline_keyboard=[[b] for b in buttons])
+    return Keyboard(inline_keyboard=[[b.model_copy(update={'text':panel.config('button:'+b.text,b.text)})] for b in buttons])
 
 BACK = Button(text='В главное меню', callback_data='menu')
 
 def menu():
-    return keyboard(*(link(label, 'CHANNEL_URL') if i == 4 else Button(text=label, callback_data=f'page:{i}') for i, label in enumerate(LABELS)))
+    labels=[panel.config('button:'+x,x) for x in LABELS]
+    return keyboard(*(link(label, 'CHANNEL_URL') if i == 4 else Button(text=label, callback_data=f'page:{i}') for i, label in enumerate(labels)))
 
 def banner():
     image = Image.new('RGB', (800, 180), '#722c41')
@@ -53,10 +59,26 @@ def banner():
 
 async def screen(uid, text, reply_markup, photo=None):
     """One durable media message; changing media also replaces its caption/buttons."""
+    text = panel.config('text:'+text,text)
     user = store.data['users'][str(uid)]
     clicked = clicked_message_id.get()
     message_id = clicked if clicked is not None else user.get('screen_message_id')
-    upload = BufferedInputFile(photo if photo is not None else banner(), filename='screen.png')
+    page = user.get('page','Главное меню')
+    custom = panel.config('image:'+page,'')
+    if photo is not None and custom:
+        from PIL import ImageOps
+        decoration = io.BytesIO()
+        await bot.download(custom, destination=decoration)
+        with Image.open(decoration) as source, Image.open(io.BytesIO(photo)) as qr:
+            header = ImageOps.contain(source.convert('RGB'), (800, 300))
+            qr_image = qr.convert('RGB').resize((800, 800), Image.Resampling.NEAREST)
+            combined = Image.new('RGB', (800, header.height + 800), 'white')
+            combined.paste(header, ((800-header.width)//2, 0))
+            combined.paste(qr_image, (0, header.height))
+            output = io.BytesIO()
+            combined.save(output, format='PNG')
+            photo = output.getvalue()
+    upload = BufferedInputFile(photo,filename='qr.png') if photo is not None else custom or BufferedInputFile(banner(),filename='screen.png')
     if message_id:
         try:
             result = await bot.edit_message_media(
@@ -93,6 +115,7 @@ class Deduplicate(BaseMiddleware):
 dp.update.outer_middleware(Deduplicate())
 
 async def schedule(uid, branch, seconds):
+    seconds = panel.config('delay:'+branch,seconds)
     with store.change() as data:
         data['jobs'].setdefault(f'{uid}:{branch}', dict(user_id=uid, due_at=time.time()+seconds))
 
@@ -108,7 +131,7 @@ async def invite(uid, manual=False):
             await screen(uid, 'Призы на 2 000 000 рублей!', reply_markup=keyboard(link('Узнать условия участия', 'RAFFLE_POST_URL'), BACK))
         return
     try:
-        msg = await (screen if manual else bot.send_message)(uid, 'Призы на 2 000 000 рублей!' if manual else 'Новогодний розыгрыш — призы на 2 000 000 рублей!', reply_markup=keyboard(link('Узнать условия участия', 'RAFFLE_POST_URL'), BACK))
+        msg = await (screen if manual else bot.send_message)(uid, panel.config('text:Призы на 2 000 000 рублей!','Призы на 2 000 000 рублей!') if manual else panel.config('text:Новогодний розыгрыш — призы на 2 000 000 рублей!','Новогодний розыгрыш — призы на 2 000 000 рублей!'), reply_markup=keyboard(link('Узнать условия участия', 'RAFFLE_POST_URL'), BACK))
     except Exception:
         with store.change() as data:
             data['invitations'][str(uid)]['status'] = 'uncertain'
@@ -119,6 +142,9 @@ async def invite(uid, manual=False):
     await event(uid, 'invitation_sent', 'manual' if manual else 'scheduled')
 
 async def coupon(uid):
+    if not panel.config('enabled',True) and not store.data['users'][str(uid)].get('code'):
+        await screen(uid,panel.config('pause','Выдача подарков временно приостановлена.'),reply_markup=keyboard(BACK))
+        return
     code = store.assign(uid)
     if code is None:
         await screen(uid, 'Подарочные коды пока закончились. Попробуйте позже.', reply_markup=keyboard(BACK))
@@ -128,6 +154,7 @@ async def coupon(uid):
     await screen(uid, photo=buffer.getvalue(), text='Покажи этот QR-код продавцу, чтобы получить подарок', reply_markup=keyboard(link('Узнать наши адреса', 'ADDRESSES_URL'), BACK))
     await schedule(uid, 'coupon', 120)
     await event(uid, 'coupon_shown')
+    await panel.low_stock()
 
 @dp.message(CommandStart(), F.chat.type == 'private')
 async def start(message):
@@ -136,11 +163,15 @@ async def start(message):
     with store.change() as data:
         user = data['users'].setdefault(str(uid), dict(source=payload, created_at=time.time()))
         user.update(username=message.from_user.username, first_name=message.from_user.first_name, last_seen=time.time())
+    with store.change() as data: data['users'][str(uid)]['page']='Главное меню'
     await event(uid, 'start')
     await screen(uid, 'Главное меню', reply_markup=menu())
 
 @dp.callback_query()
 async def navigate(query):
+    if (query.data or '').startswith('a:'):
+        await panel.action(query)
+        return
     if not query.message or query.message.chat.type != 'private':
         await query.answer()
         return
@@ -164,9 +195,12 @@ async def navigate_current(query):
     if query.data == 'missing':
         await screen(uid, 'Ссылка пока не добавлена. Попробуйте позже.', reply_markup=keyboard(BACK))
     elif query.data == 'menu':
+        with store.change() as data: data['users'][str(uid)]['page']='Главное меню'
         await screen(uid, 'Главное меню', reply_markup=menu())
     elif query.data.startswith('page:'):
         page = query.data[5:]
+        if page.isdigit() and int(page)<len(LABELS):
+            with store.change() as data: data['users'][str(uid)]['page']=LABELS[int(page)]
         await event(uid, 'menu_open', page)
         if page == '0':
             await coupon(uid)
@@ -184,12 +218,7 @@ async def navigate_current(query):
 
 @dp.message(Command('admin'), F.chat.type == 'private')
 async def admin(message):
-    if message.from_user.id not in ADMINS:
-        return
-    await message.answer(f'Версия: {BUILD}')
-    assigned = sum(owner is not None for owner in store.data['codes'].values())
-    uncertain = sum(i['status'] == 'uncertain' for i in store.data['invitations'].values())
-    await message.answer(f"Кодов: {len(store.data['codes'])}. Выдано: {assigned}. Осталось: {len(store.data['codes'])-assigned}. Спорных приглашений: {uncertain}.\nДля загрузки отправьте сюда файл .xlsx: первый лист, столбец A, начиная со второй строки.")
+    await panel.admin(message)
 
 @dp.message(F.document, F.chat.type == 'private')
 async def upload(message):
@@ -208,14 +237,25 @@ async def upload(message):
         log.warning('Invalid workbook: %s', type(exc).__name__)
         await message.answer(str(exc) if isinstance(exc, ValueError) else 'Не удалось прочитать Excel. Проверьте формат .xlsx.')
         return
+    before=set(store.data['codes'])
     added = store.import_codes(codes)
+    with store.change() as data:
+        batch=str(message.message_id)+'-'+str(message.from_user.id)
+        data.setdefault('batches',{})[batch]=[c for c in codes if c not in before]
+        panel.audit(data,message.from_user.id,'import '+batch+': '+str(added))
+    await panel.low_stock()
     await event(message.from_user.id, 'codes_imported', str(added))
     await message.answer(f'Добавлено: {added}. Дубликатов пропущено: {len(codes)-added}. Ранее выданные коды сохранены.')
+
+@dp.message(F.chat.type=='private')
+async def admin_input(message):
+    await panel.input_value(message)
 
 async def worker():
     while True:
         try:
-            due = {j['user_id'] for j in store.data['jobs'].values() if j['due_at'] <= time.time() and str(j['user_id']) not in store.data['invitations']}
+            await panel.low_stock()
+            due = {j['user_id'] for j in store.data['jobs'].values() if panel.config('timers',True) and not j.get('cancelled') and j['due_at'] <= time.time() and str(j['user_id']) not in store.data['invitations']}
             for uid in due:
                 await invite(uid)
         except Exception:
