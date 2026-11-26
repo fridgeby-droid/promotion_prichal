@@ -37,10 +37,14 @@ async def show(message, text, reply_markup=None, photo=None):
         else:
             with app.store.change() as data:
                 data.setdefault('admin_screens', {})[str(uid)] = message_id
+                if str(uid) in data['users']:
+                    data['users'][str(uid)]['screen_message_id'] = message_id
             return result
     result = await app.bot.send_photo(uid, photo=media.media, caption=text, reply_markup=markup)
     with app.store.change() as data:
         data.setdefault('admin_screens', {})[str(uid)] = result.message_id
+        if str(uid) in data['users']:
+            data['users'][str(uid)]['screen_message_id'] = result.message_id
     return result
 
 def config(key, default=None):
@@ -82,6 +86,11 @@ async def home(message, notice=""):
 async def admin(message):
     if message.from_user.id in app.ADMINS:
         pending.pop(message.from_user.id,None)
+        uid = str(message.from_user.id)
+        client_id = app.store.data['users'].get(uid, {}).get('screen_message_id')
+        if client_id:
+            with app.store.change() as data:
+                data.setdefault('admin_screens', {})[uid] = client_id
         await home(message)
 
 @router.callback_query(F.data.startswith('a:'))

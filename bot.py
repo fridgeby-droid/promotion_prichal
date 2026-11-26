@@ -20,7 +20,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'admin-panel-2'
+BUILD = 'admin-panel-3'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -86,6 +86,8 @@ async def screen(uid, text, reply_markup, photo=None):
                 media=InputMediaPhoto(media=upload, caption=text), reply_markup=reply_markup)
             with store.change() as data:
                 data['users'][str(uid)]['screen_message_id'] = message_id
+                if uid in ADMINS:
+                    data.setdefault('admin_screens', {})[str(uid)] = message_id
             return result
         except TelegramBadRequest as exc:
             if 'message is not modified' in exc.message.lower():
@@ -97,6 +99,8 @@ async def screen(uid, text, reply_markup, photo=None):
     result = await bot.send_photo(uid, photo=upload, caption=text, reply_markup=reply_markup)
     with store.change() as data:
         data['users'][str(uid)]['screen_message_id'] = result.message_id
+        if uid in ADMINS:
+            data.setdefault('admin_screens', {})[str(uid)] = result.message_id
     return result
 
 async def event(uid, kind, detail=None):
@@ -159,10 +163,14 @@ async def coupon(uid):
 @dp.message(CommandStart(), F.chat.type == 'private')
 async def start(message):
     uid = message.from_user.id
+    # Leave editor mode and switch the visible admin screen to the client menu.
+    panel.pending.pop(uid, None)
     payload = message.text.partition(' ')[2][:64]
     with store.change() as data:
         user = data['users'].setdefault(str(uid), dict(source=payload, created_at=time.time()))
         user.update(username=message.from_user.username, first_name=message.from_user.first_name, last_seen=time.time())
+        if uid in ADMINS and data.get('admin_screens', {}).get(str(uid)):
+            user['screen_message_id'] = data['admin_screens'][str(uid)]
     with store.change() as data: data['users'][str(uid)]['page']='Главное меню'
     await event(uid, 'start')
     await screen(uid, 'Главное меню', reply_markup=menu())

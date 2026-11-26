@@ -25,6 +25,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         namespace = dict(panel=SimpleNamespace(config=lambda key, default=None: default), store=self.store, bot=self.bot, clicked_message_id=self.clicked, banner=lambda: b'banner', BufferedInputFile=lambda *a, **k: a[0], InputMediaPhoto=lambda **k: k, TelegramBadRequest=BadRequest)
         exec(compile(ast.Module(body=[screen], type_ignores=[]), 'bot.py', 'exec'), namespace)
         self.screen = namespace['screen']
+        namespace['ADMINS'] = set()
 
     async def asyncTearDown(self):
         self.store.close()
