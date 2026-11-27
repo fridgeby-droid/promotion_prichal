@@ -21,7 +21,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'campaigns-1'
+BUILD = 'campaigns-2'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -173,8 +173,8 @@ async def invite(uid, manual=False):
     await event(uid, 'invitation_sent', 'manual' if manual else 'scheduled', campaign_id=campaign_id)
 
 async def coupon(uid):
-    if store.data['campaign']['status']!='active' and not store.data['users'][str(uid)].get('code'):
-        await screen(uid,'Акция завершена. Следите за новыми предложениями!',reply_markup=keyboard(BACK))
+    if store.data['campaign']['status']!='active':
+        await screen(uid,panel.config('campaign_ended','Акция завершена. Сейчас активных акций нет. Следите за новыми предложениями!'),reply_markup=keyboard(BACK))
         return
     if not panel.config('enabled',True) and not store.data['users'][str(uid)].get('code'):
         await screen(uid,panel.config('pause','Выдача подарков временно приостановлена.'),reply_markup=keyboard(BACK))

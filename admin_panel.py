@@ -80,7 +80,7 @@ def keyboard(items):
         items = list(items) + [('В админ-меню', 'home')]
     return K(inline_keyboard=[[B(text=label, callback_data='a:'+action)] for label,action in items])
 
-HOME = [('Акции: новая / завершить / архив','campaigns'),('Выдача: включить / выключить','issue'),('Загрузить Excel','import'),('Удалить свободные коды','delete'),('Статистика и Excel','stats'),('Тексты разделов','texts'),('Названия кнопок','buttons'),('Ссылки','links'),('Картинки разделов','images'),('Отложенные приглашения','timers'),('Порог остатка','threshold'),('Текст паузы выдачи','pause'),('Отменить последнее изменение','undo'),('Скачать резервную копию','backup'),('Журнал действий','log')]
+HOME = [('Акции: новая / завершить / архив','campaigns'),('Выдача: включить / выключить','issue'),('Загрузить Excel','import'),('Удалить свободные коды','delete'),('Статистика и Excel','stats'),('Тексты разделов','texts'),('Названия кнопок','buttons'),('Ссылки','links'),('Картинки разделов','images'),('Отложенные приглашения','timers'),('Порог остатка','threshold'),('Текст паузы выдачи','pause'),('Текст после завершения акции','campaign_ended'),('Отменить последнее изменение','undo'),('Скачать резервную копию','backup'),('Журнал действий','log')]
 
 async def home(message, notice=""):
     campaign=app.store.data['campaign']
@@ -175,6 +175,9 @@ async def action_current(q):
                 for job in data['jobs'].values(): job['cancelled']=True
             audit(data,uid,cmd)
         await home(q.message); return
+    if cmd=='campaign_ended':
+        pending[uid]={'input':'campaign_ended'}
+        await show(q.message,'Текст при завершённой акции (до 900 символов).\nТекущее: '+config('campaign_ended','Акция завершена. Сейчас активных акций нет. Следите за новыми предложениями!')[:800]); return
     if cmd.startswith('delay:') or cmd in ('threshold','pause'):
         pending[uid]={'input':cmd}
         await show(q.message, 'Введите новое значение. Задержка: 1–86400 секунд, порог: 0–50000. Изменение задержки действует на новые задания.'); return

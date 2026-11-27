@@ -42,7 +42,8 @@ class CampaignTests(unittest.TestCase):
         with self.store.change() as d:d['users']['2']={}
         self.store.finish_campaign('legacy',99)
         self.assertIsNone(self.store.assign(2))
-        self.assertEqual(self.store.assign(1),self.old)
+        self.assertIsNone(self.store.assign(1))
+        self.assertEqual(self.store.data['users']['1']['code'],self.old)
 
     def test_jobs_are_archived_not_carried_forward(self):
         with self.store.change() as d:

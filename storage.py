@@ -80,6 +80,8 @@ class Store:
     def assign(self, uid):
         key = str(uid)
         user = self.data['users'][key]
+        if self.data['campaign']['status'] != 'active':
+            return None
         if user.get('code'):
             return user['code']
         if self.data['campaign']['status'] != 'active' or not self.data.get('settings', {}).get('enabled', True):

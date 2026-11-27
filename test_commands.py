@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from aiogram import Bot
 from aiogram.types import Message, Update, Chat, User, MessageEntity
 import bot as application
@@ -59,6 +59,33 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('2',self.store.data['users'])
         self.assertNotIn('2',self.store.data.get('admin_screens',{}))
         application.bot.send_photo.assert_awaited_once()
+
+    async def test_ended_campaign_hides_old_qr_and_uses_custom_text(self):
+        with self.store.change() as data:
+            data['users']['2']={}
+            data['settings']={'campaign_ended':'Подарки вернутся скоро!'}
+        self.store.import_codes(['TEST1234'])
+        self.store.assign(2)
+        self.store.finish_campaign('legacy',1)
+        with patch.object(application,'screen',new_callable=AsyncMock) as screen:
+            await application.coupon(2)
+            screen.assert_awaited_once()
+            self.assertEqual(screen.call_args.args[1],'Подарки вернутся скоро!')
+            self.assertNotIn('photo',screen.call_args.kwargs)
+        self.assertEqual(self.store.data['jobs'],{})
+        self.assertEqual(self.store.data['users']['2']['code'],'TEST1234')
+
+    async def test_new_active_campaign_can_show_new_qr(self):
+        with self.store.change() as data:data['users']['2']={}
+        self.store.import_codes(['OLD12345']);self.store.assign(2)
+        self.store.finish_campaign('legacy',1)
+        self.store.new_campaign('Новая','legacy',1)
+        self.store.import_codes(['NEW12345'])
+        with self.store.change() as data:data['settings']['enabled']=True
+        with patch.object(application,'screen',new_callable=AsyncMock) as screen, patch.object(panel,'low_stock',new_callable=AsyncMock):
+            await application.coupon(2)
+            self.assertIn('photo',screen.call_args.kwargs)
+        self.assertEqual(self.store.data['users']['2']['code'],'NEW12345')
 
     async def test_persistent_keyboard_shortcuts(self):
         for index, text in enumerate(('Главное меню','Админ-панель'), 100):
