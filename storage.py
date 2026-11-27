@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -36,6 +37,8 @@ class Store:
         else:
             self.data = dict(version=1, codes={}, users={}, jobs={}, invitations={}, events=[], updates=[])
         with self.change() as data:
+            data.setdefault('campaign', dict(id='legacy', name='Первая акция (перенесена)', status='active', created_at=time.time()))
+            data.setdefault('campaign_archives', {})
             for invitation in data['invitations'].values():
                 if invitation['status'] == 'sending':
                     invitation['status'] = 'uncertain'
@@ -66,9 +69,10 @@ class Store:
         if any(not CODE.fullmatch(c) for c in codes):
             raise ValueError('Код должен содержать ровно 8 латинских букв или цифр.')
         added = 0
+        historical = {code for archive in self.data['campaign_archives'].values() for code, owner in archive['codes'].items() if owner is not None}
         with self.change() as data:
             for code in codes:
-                if code not in data['codes']:
+                if code not in data['codes'] and code not in historical:
                     data['codes'][code] = None
                     added += 1
         return added
@@ -78,6 +82,8 @@ class Store:
         user = self.data['users'][key]
         if user.get('code'):
             return user['code']
+        if self.data['campaign']['status'] != 'active' or not self.data.get('settings', {}).get('enabled', True):
+            return None
         code = next((c for c, owner in self.data['codes'].items() if owner is None), None)
         if code is None:
             return None
@@ -86,6 +92,39 @@ class Store:
             data['users'][key]['code'] = code
             data['users'][key]['issued_at'] = time.time()
         return code
+
+    def finish_campaign(self, expected_id, actor):
+        if self.data['campaign']['id'] != expected_id:
+            raise ValueError('Акция уже изменилась. Откройте раздел заново.')
+        with self.change() as data:
+            data['campaign'].update(status='ended', ended_at=time.time())
+            data.setdefault('settings', {})['enabled'] = False
+            data['settings']['timers'] = False
+            data['events'].append(dict(user_id=actor, kind='admin', detail='campaign ended', campaign_id=expected_id, at=time.time()))
+
+    def new_campaign(self, name, expected_id, actor):
+        if not name.strip() or len(name)>100:
+            raise ValueError('Название акции: от 1 до 100 символов.')
+        if self.data['campaign']['id'] != expected_id:
+            raise ValueError('Акция уже изменилась. Откройте раздел заново.')
+        new_id = uuid.uuid4().hex
+        with self.change() as data:
+            metadata = copy.deepcopy(data['campaign'])
+            metadata.update(status='ended', ended_at=metadata.get('ended_at',time.time()))
+            archive = dict(metadata=metadata, users=copy.deepcopy(data['users']), settings=copy.deepcopy(data.get('settings',{})))
+            for key in ('codes','jobs','invitations','batches'):
+                archive[key] = copy.deepcopy(data.get(key,{}))
+                data[key] = {}
+            data['campaign_archives'][expected_id] = archive
+            for user in data['users'].values():
+                user.pop('code',None)
+                user.pop('issued_at',None)
+            data['campaign'] = dict(id=new_id, name=name.strip(), status='active', created_at=time.time())
+            data.setdefault('settings',{}).update(enabled=False,timers=False)
+            data.pop('undo',None)
+            data['low_alert'] = False
+            data['events'].append(dict(user_id=actor,kind='admin',detail='campaign created: '+name,campaign_id=new_id,at=time.time()))
+        return new_id
 
     def close(self):
         self.lock.close()

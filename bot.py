@@ -21,7 +21,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'menu-flow-1'
+BUILD = 'campaigns-1'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -125,9 +125,9 @@ async def screen(uid, text, reply_markup, photo=None, fresh=False):
             data.setdefault('admin_screens', {})[str(uid)] = result.message_id
     return result
 
-async def event(uid, kind, detail=None):
+async def event(uid, kind, detail=None, campaign_id=None):
     with store.change() as data:
-        data['events'].append(dict(user_id=uid, kind=kind, detail=detail, at=time.time()))
+        data['events'].append(dict(user_id=uid, kind=kind, detail=detail, campaign_id=campaign_id or data['campaign']['id'], at=time.time()))
 
 class Deduplicate(BaseMiddleware):
     async def __call__(self, handler, update, data):
@@ -146,6 +146,9 @@ async def schedule(uid, branch, seconds):
         data['jobs'].setdefault(f'{uid}:{branch}', dict(user_id=uid, due_at=time.time()+seconds))
 
 async def invite(uid, manual=False):
+    campaign_id = store.data['campaign']['id']
+    if not manual and (store.data['campaign']['status']!='active' or not panel.config('timers',True)):
+        return
     # Claim persisted before Telegram call: uncertain outcomes never auto-retry.
     claimed = None
     if str(uid) not in store.data['invitations']:
@@ -160,14 +163,19 @@ async def invite(uid, manual=False):
         msg = await (screen if manual else bot.send_message)(uid, panel.config('text:Призы на 2 000 000 рублей!','Призы на 2 000 000 рублей!') if manual else panel.config('text:Новогодний розыгрыш — призы на 2 000 000 рублей!','Новогодний розыгрыш — призы на 2 000 000 рублей!'), reply_markup=keyboard(link('Узнать условия участия', 'RAFFLE_POST_URL'), BACK))
     except Exception:
         with store.change() as data:
-            data['invitations'][str(uid)]['status'] = 'uncertain'
+            target = data if data['campaign']['id']==campaign_id else data['campaign_archives'][campaign_id]
+            target['invitations'][str(uid)]['status'] = 'uncertain'
         log.exception('Invitation outcome uncertain for %s', uid)
         return
     with store.change() as data:
-        data['invitations'][str(uid)].update(status='sent', message_id=msg.message_id)
-    await event(uid, 'invitation_sent', 'manual' if manual else 'scheduled')
+        target = data if data['campaign']['id']==campaign_id else data['campaign_archives'][campaign_id]
+        target['invitations'][str(uid)].update(status='sent', message_id=msg.message_id)
+    await event(uid, 'invitation_sent', 'manual' if manual else 'scheduled', campaign_id=campaign_id)
 
 async def coupon(uid):
+    if store.data['campaign']['status']!='active' and not store.data['users'][str(uid)].get('code'):
+        await screen(uid,'Акция завершена. Следите за новыми предложениями!',reply_markup=keyboard(BACK))
+        return
     if not panel.config('enabled',True) and not store.data['users'][str(uid)].get('code'):
         await screen(uid,panel.config('pause','Выдача подарков временно приостановлена.'),reply_markup=keyboard(BACK))
         return
@@ -260,6 +268,7 @@ async def upload(message):
     if not (document.file_name or '').lower().endswith('.xlsx') or (document.file_size or 0) > 5*1024*1024:
         await panel.show(message, 'Нужен файл .xlsx размером до 5 МБ.')
         return
+    campaign_id = store.data['campaign']['id']
     content = io.BytesIO()
     await bot.download(document, destination=content)
     try:
@@ -268,6 +277,8 @@ async def upload(message):
         log.warning('Invalid workbook: %s', type(exc).__name__)
         await panel.show(message, str(exc) if isinstance(exc, ValueError) else 'Не удалось прочитать Excel. Проверьте формат .xlsx.')
         return
+    if store.data['campaign']['id']!=campaign_id:
+        await panel.show(message,'Акция сменилась во время загрузки. Отправьте Excel заново.'); return
     before=set(store.data['codes'])
     added = store.import_codes(codes)
     with store.change() as data:
@@ -276,7 +287,7 @@ async def upload(message):
         panel.audit(data,message.from_user.id,'import '+batch+': '+str(added))
     await panel.low_stock()
     await event(message.from_user.id, 'codes_imported', str(added))
-    await panel.show(message, f'Добавлено: {added}. Дубликатов пропущено: {len(codes)-added}. Ранее выданные коды сохранены.')
+    await panel.show(message, f'Добавлено: {added}. Дубликатов и ранее выданных кодов пропущено: {len(codes)-added}. Ранее выданные коды сохранены.')
 
 @dp.message(F.chat.type=='private')
 async def admin_input(message):
@@ -286,8 +297,10 @@ async def worker():
     while True:
         try:
             await panel.low_stock()
-            due = {j['user_id'] for j in store.data['jobs'].values() if panel.config('timers',True) and not j.get('cancelled') and j['due_at'] <= time.time() and str(j['user_id']) not in store.data['invitations']}
+            campaign_id=store.data['campaign']['id']
+            due = {j['user_id'] for j in store.data['jobs'].values() if store.data['campaign']['status']=='active' and panel.config('timers',True) and not j.get('cancelled') and j['due_at'] <= time.time() and str(j['user_id']) not in store.data['invitations']}
             for uid in due:
+                if store.data['campaign']['id']!=campaign_id: break
                 await invite(uid)
         except Exception:
             log.exception('Scheduler failure')

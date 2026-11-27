@@ -80,10 +80,11 @@ def keyboard(items):
         items = list(items) + [('В админ-меню', 'home')]
     return K(inline_keyboard=[[B(text=label, callback_data='a:'+action)] for label,action in items])
 
-HOME = [('Выдача: включить / выключить','issue'),('Загрузить Excel','import'),('Удалить свободные коды','delete'),('Статистика и Excel','stats'),('Тексты разделов','texts'),('Названия кнопок','buttons'),('Ссылки','links'),('Картинки разделов','images'),('Отложенные приглашения','timers'),('Порог остатка','threshold'),('Текст паузы выдачи','pause'),('Отменить последнее изменение','undo'),('Скачать резервную копию','backup'),('Журнал действий','log')]
+HOME = [('Акции: новая / завершить / архив','campaigns'),('Выдача: включить / выключить','issue'),('Загрузить Excel','import'),('Удалить свободные коды','delete'),('Статистика и Excel','stats'),('Тексты разделов','texts'),('Названия кнопок','buttons'),('Ссылки','links'),('Картинки разделов','images'),('Отложенные приглашения','timers'),('Порог остатка','threshold'),('Текст паузы выдачи','pause'),('Отменить последнее изменение','undo'),('Скачать резервную копию','backup'),('Журнал действий','log')]
 
 async def home(message, notice=""):
-    await show(message, f'{notice}Админ-панель {app.BUILD}\nВыдача: {config("enabled",True)}; приглашения: {config("timers",True)}',reply_markup=keyboard(HOME))
+    campaign=app.store.data['campaign']
+    await show(message, f'{notice}Админ-панель {app.BUILD}\nАкция: {campaign["name"]} ({campaign["status"]})\nВыдача: {config("enabled",True)}; приглашения: {config("timers",True)}',reply_markup=keyboard(HOME))
 
 @router.message(Command('admin'), F.chat.type=='private')
 async def admin(message):
@@ -109,9 +110,36 @@ async def action_current(q):
         await q.answer('Нет доступа',show_alert=True); return
     await q.answer()
     cmd=q.data[2:]
+    campaign=app.store.data['campaign']
+    if cmd=='campaigns':
+        await show(q.message,f'Акция: {campaign["name"]}\nСтатус: {campaign["status"]}\nАрхивных акций: {len(app.store.data["campaign_archives"])}',reply_markup=keyboard([('Создать новую акцию','campaign:new'),('Завершить текущую','campaign:end'),('История всех выдач (Excel)','history')]))
+        return
+    if cmd=='campaign:new':
+        pending[uid]={'input':'campaign_name','campaign_id':campaign['id']}
+        await show(q.message,'Введите название новой акции (до 100 символов). Прежняя акция будет завершена и сохранена в архиве.'); return
+    if cmd=='campaign:end':
+        pending[uid]={'end_campaign':campaign['id']}
+        await show(q.message,'Завершить акцию? Новые выдачи и автоматические приглашения остановятся. История сохранится.',reply_markup=keyboard([('Завершить','save'),('Отмена','home')])); return
+    if cmd=='history':
+        wb=Workbook(); ws=wb.active; ws.title='История выдач'
+        ws.append(['ID акции','Акция','Статус','Telegram ID','username','Код','Выдан UTC epoch'])
+        entries=[(v['metadata'],v['users']) for v in app.store.data['campaign_archives'].values()]+[(campaign,app.store.data['users'])]
+        for meta,users in entries:
+            for user_id,user in users.items():
+                if user.get('code'):
+                    ws.append([str(x or '') for x in (meta['id'],meta['name'],meta['status'],user_id,user.get('username'),user['code'],user.get('issued_at'))])
+                    for cell in ws[ws.max_row]: cell.data_type='s'
+        overview=wb.create_sheet('Акции'); overview.append(['ID','Название','Статус','Получателей'])
+        for meta,users in entries:
+            overview.append([meta['id'],meta['name'],meta['status'],sum(bool(u.get('code')) for u in users.values())])
+            for cell in overview[overview.max_row]: cell.data_type='s'
+        output=io.BytesIO(); wb.save(output); wb.close()
+        await q.message.answer_document(BufferedInputFile(output.getvalue(),filename='campaign-history.xlsx')); await app.event(uid,'admin','campaign history export'); return
     if cmd=='home':
         pending.pop(uid,None); await home(q.message); return
     if cmd=='issue':
+        if campaign['status']!='active':
+            await show(q.message,'Акция завершена. Создайте новую в разделе «Акции».'); return
         commit(uid,'enabled',not config('enabled',True)); await home(q.message); return
     if cmd=='import':
         pending.pop(uid,None)
@@ -152,6 +180,18 @@ async def action_current(q):
         await show(q.message, 'Введите новое значение. Задержка: 1–86400 секунд, порог: 0–50000. Изменение задержки действует на новые задания.'); return
     if cmd=='save':
         state=pending.pop(uid,{})
+        if 'new_campaign' in state or 'end_campaign' in state:
+            try:
+                if 'new_campaign' in state:
+                    app.store.new_campaign(state['new_campaign'],state['campaign_id'],uid)
+                    notice='Новая акция создана. Загрузите Excel и включите выдачу. Приглашения включаются отдельно.\n'
+                else:
+                    app.store.finish_campaign(state['end_campaign'],uid)
+                    notice='Акция завершена. История сохранена.\n'
+                pending.clear()
+            except ValueError as exc:
+                notice=str(exc)+'\n'
+            await home(q.message,notice); return
         notice='Изменения сохранены.\n'
         if 'delete' in state:
             count=0
@@ -196,6 +236,11 @@ async def input_value(message):
     state=pending[uid]; key=state.get('input')
     if not key: return False
     value=message.text or ''
+    if key=='campaign_name':
+        if not value.strip() or len(value)>100:
+            await show(message,'Введите название от 1 до 100 символов.'); return True
+        pending[uid]={'new_campaign':value.strip(),'campaign_id':state['campaign_id']}
+        await show(message,f'Новая акция: {value.strip()}\nПрежние выдачи уйдут в архив. Запас новой акции будет пустым. Выдача и таймеры выключены до настройки.',reply_markup=keyboard([('Создать акцию','save'),('Отмена','home')])); return True
     if key=='delete':
         pending[uid]={'delete':value.split()}
     else:
@@ -221,6 +266,8 @@ async def input_value(message):
     return True
 
 async def low_stock():
+    if app.store.data['campaign']['status']!='active' or not config('enabled',True): return
+    campaign_id=app.store.data['campaign']['id']
     free=sum(v is None for v in app.store.data['codes'].values())
     low=free<=config('threshold',50)
     if not low:
@@ -231,4 +278,5 @@ async def low_stock():
     for uid in app.ADMINS:
         try: await app.bot.send_message(uid,f'Мало промокодов: осталось {free}. /admin')
         except Exception: continue
-    with app.store.change() as data: data['low_alert']=True
+    if app.store.data['campaign']['id']==campaign_id:
+        with app.store.change() as data: data['low_alert']=True

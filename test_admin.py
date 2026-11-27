@@ -57,6 +57,18 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         await self.click('stats')
         self.message.answer_document.assert_awaited_once()
 
+    async def test_create_campaign_confirmation_and_archive_export(self):
+        await self.click('campaign:new')
+        self.message.from_user=SimpleNamespace(id=1)
+        self.message.text='Новая акция'
+        await panel.input_value(self.message)
+        self.assertEqual(self.store.data['campaign']['id'],'legacy')
+        await self.click('save')
+        self.assertEqual(self.store.data['campaign']['name'],'Новая акция')
+        self.assertIn('legacy',self.store.data['campaign_archives'])
+        await self.click('history')
+        self.message.answer_document.assert_awaited_once()
+
     async def test_admin_transitions_edit_same_message(self):
         for cmd in ('home','delete','del:select','home','timers','threshold','home'):
             await self.click(cmd)
