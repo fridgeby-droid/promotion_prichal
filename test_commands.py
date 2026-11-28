@@ -92,7 +92,21 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
             message=Message(message_id=index,date=datetime.now(timezone.utc),chat=Chat(id=1,type='private'),from_user=User(id=1,is_bot=False,first_name='Test'),text=text)
             await application.dp.feed_update(self.telegram,Update(update_id=index,message=message))
         self.assertEqual(application.bot.send_photo.await_count,2)
-        application.bot.send_message.assert_awaited_once()
+        self.assertEqual(application.bot.send_message.await_count,2)
         self.assertEqual(self.store.data['users']['1']['source'],'')
+
+    async def test_keyboard_restored_despite_saved_delivery_flag(self):
+        with self.store.change() as data:
+            data['navigation_keys']={'1':'admin','2':'user'}
+        await self.command('/start',uid=1)
+        await self.command('/admin',uid=1)
+        await self.command('/start',uid=2)
+        calls=application.bot.send_message.call_args_list
+        self.assertEqual(len(calls),3)
+        for index, expected in enumerate((['Главное меню','Админ-панель'],['Главное меню','Админ-панель'],['Главное меню'])):
+            markup=calls[index].kwargs['reply_markup']
+            self.assertEqual([b.text for row in markup.keyboard for b in row],expected)
+            self.assertTrue(markup.is_persistent)
+            self.assertFalse(markup.one_time_keyboard)
 
 if __name__=='__main__':unittest.main()

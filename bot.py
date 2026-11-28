@@ -21,7 +21,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'campaigns-2'
+BUILD = 'campaigns-3'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -69,10 +69,10 @@ async def retire_menu(uid):
 
 async def navigation_keys(uid):
     role = 'admin' if uid in ADMINS else 'user'
-    if store.data.get('navigation_keys', {}).get(str(uid)) == role:
-        return
+    # Stored delivery is not evidence that a Telegram client still shows it.
+    # Resend on every explicit menu command, never on inline transitions.
     labels = ['Главное меню'] + (['Админ-панель'] if uid in ADMINS else [])
-    await bot.send_message(uid, 'Кнопки под полем ввода возвращают меню вниз.', reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=s) for s in labels]], resize_keyboard=True, is_persistent=True))
+    await bot.send_message(uid, 'Кнопки под полем ввода возвращают меню вниз.', reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=s) for s in labels]], resize_keyboard=True, is_persistent=True, one_time_keyboard=False))
     with store.change() as data:
         data.setdefault('navigation_keys', {})[str(uid)] = role
 
