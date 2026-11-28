@@ -25,6 +25,7 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         namespace = dict(panel=SimpleNamespace(config=lambda key, default=None: default), store=self.store, bot=self.bot, clicked_message_id=self.clicked, banner=lambda: b'banner', BufferedInputFile=lambda *a, **k: a[0], InputMediaPhoto=lambda **k: k, TelegramBadRequest=BadRequest)
         exec(compile(ast.Module(body=[screen], type_ignores=[]), 'bot.py', 'exec'), namespace)
         self.screen = namespace['screen']
+        self.panel = namespace['panel']
         namespace['ADMINS'] = set()
 
     async def asyncTearDown(self):
@@ -56,6 +57,15 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.clicked.set(42)
         self.bot.edit_message_media.side_effect = BadRequest('message is not modified')
         await self.screen(1, 'menu', None)
+        self.bot.send_photo.assert_not_called()
+
+    async def test_qr_replaces_cover_and_cover_returns_without_qr(self):
+        self.clicked.set(42)
+        self.panel.config = lambda key, default=None: 'gift-cover-file-id' if key.startswith('image:') else default
+        await self.screen(1, 'Ваш подарок', None, photo=b'original-qr-bytes')
+        self.assertEqual(self.bot.edit_message_media.call_args.kwargs['media']['media'], b'original-qr-bytes')
+        await self.screen(1, 'Акция завершена', None)
+        self.assertEqual(self.bot.edit_message_media.call_args.kwargs['media']['media'], 'gift-cover-file-id')
         self.bot.send_photo.assert_not_called()
 
 if __name__ == '__main__':

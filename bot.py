@@ -21,7 +21,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'campaigns-3'
+BUILD = 'campaigns-4'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -87,19 +87,7 @@ async def screen(uid, text, reply_markup, photo=None, fresh=False):
         message_id = None
     page = user.get('page','Главное меню')
     custom = panel.config('image:'+page,'')
-    if photo is not None and custom:
-        from PIL import ImageOps
-        decoration = io.BytesIO()
-        await bot.download(custom, destination=decoration)
-        with Image.open(decoration) as source, Image.open(io.BytesIO(photo)) as qr:
-            header = ImageOps.contain(source.convert('RGB'), (800, 300))
-            qr_image = qr.convert('RGB').resize((800, 800), Image.Resampling.NEAREST)
-            combined = Image.new('RGB', (800, header.height + 800), 'white')
-            combined.paste(header, ((800-header.width)//2, 0))
-            combined.paste(qr_image, (0, header.height))
-            output = io.BytesIO()
-            combined.save(output, format='PNG')
-            photo = output.getvalue()
+    # A personal QR replaces the cover entirely; covers are for screens without a QR.
     upload = BufferedInputFile(photo,filename='qr.png') if photo is not None else custom or BufferedInputFile(banner(),filename='screen.png')
     if message_id:
         try:
