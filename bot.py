@@ -72,7 +72,7 @@ async def navigation_keys(uid):
     # Stored delivery is not evidence that a Telegram client still shows it.
     # Resend on every explicit menu command, never on inline transitions.
     labels = ['Главное меню'] + (['Админ-панель'] if uid in ADMINS else [])
-    await bot.send_message(uid, 'Кнопки под полем ввода возвращают меню вниз.', reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=s) for s in labels]], resize_keyboard=True, is_persistent=True, one_time_keyboard=False))
+    await bot.send_message(uid, 'Выберите раздел 👇', reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=s) for s in labels]], resize_keyboard=True, is_persistent=True, one_time_keyboard=False))
     with store.change() as data:
         data.setdefault('navigation_keys', {})[str(uid)] = role
 
