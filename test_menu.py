@@ -68,5 +68,12 @@ class MenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.bot.edit_message_media.call_args.kwargs['media']['media'], 'gift-cover-file-id')
         self.bot.send_photo.assert_not_called()
 
+    async def test_promo_text_appended_after_admin_description(self):
+        self.clicked.set(42)
+        self.panel.config=lambda key, default=None: 'Ваш подарок ждёт!' if key.startswith('text:') else default
+        await self.screen(1, 'Описание по умолчанию', None, photo=b'qr', promo_code='0Ab12Cd3')
+        caption=self.bot.edit_message_media.call_args.kwargs['media']['caption']
+        self.assertEqual(caption,'Ваш подарок ждёт!\n\nПромокод: 0Ab12Cd3\nЕсли QR не считывается, назовите этот код продавцу.')
+
 if __name__ == '__main__':
     unittest.main()

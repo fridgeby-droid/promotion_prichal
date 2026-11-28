@@ -21,7 +21,7 @@ from aiogram.types import BufferedInputFile, InlineKeyboardButton as Button, Inl
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-BUILD = 'campaigns-4'
+BUILD = 'campaigns-5'
 clicked_message_id = ContextVar('clicked_message_id', default=None)
 import admin_panel as panel
 import sys
@@ -76,9 +76,11 @@ async def navigation_keys(uid):
     with store.change() as data:
         data.setdefault('navigation_keys', {})[str(uid)] = role
 
-async def screen(uid, text, reply_markup, photo=None, fresh=False):
+async def screen(uid, text, reply_markup, photo=None, fresh=False, promo_code=None):
     """One durable media message; changing media also replaces its caption/buttons."""
     text = panel.config('text:'+text,text)
+    if promo_code is not None:
+        text += f'\n\nПромокод: {promo_code}\nЕсли QR не считывается, назовите этот код продавцу.'
     user = store.data['users'][str(uid)]
     clicked = clicked_message_id.get()
     message_id = clicked if clicked is not None else user.get('screen_message_id')
@@ -173,7 +175,7 @@ async def coupon(uid):
         return
     buffer = io.BytesIO()
     qrcode.make(code).save(buffer, format='PNG')
-    await screen(uid, photo=buffer.getvalue(), text='Покажи этот QR-код продавцу, чтобы получить подарок', reply_markup=keyboard(link('Узнать наши адреса', 'ADDRESSES_URL'), BACK))
+    await screen(uid, photo=buffer.getvalue(), text='Покажи этот QR-код продавцу, чтобы получить подарок', promo_code=code, reply_markup=keyboard(link('Узнать наши адреса', 'ADDRESSES_URL'), BACK))
     await schedule(uid, 'coupon', 120)
     await event(uid, 'coupon_shown')
     await panel.low_stock()

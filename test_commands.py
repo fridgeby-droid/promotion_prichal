@@ -72,6 +72,7 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
             screen.assert_awaited_once()
             self.assertEqual(screen.call_args.args[1],'Подарки вернутся скоро!')
             self.assertNotIn('photo',screen.call_args.kwargs)
+            self.assertNotIn('promo_code',screen.call_args.kwargs)
         self.assertEqual(self.store.data['jobs'],{})
         self.assertEqual(self.store.data['users']['2']['code'],'TEST1234')
 
@@ -85,7 +86,17 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(application,'screen',new_callable=AsyncMock) as screen, patch.object(panel,'low_stock',new_callable=AsyncMock):
             await application.coupon(2)
             self.assertIn('photo',screen.call_args.kwargs)
+            self.assertEqual(screen.call_args.kwargs['promo_code'],'NEW12345')
         self.assertEqual(self.store.data['users']['2']['code'],'NEW12345')
+
+    async def test_reopening_keeps_same_code_in_qr_and_text(self):
+        with self.store.change() as data:data['users']['2']={}
+        self.store.import_codes(['0Ab12Cd3','NEXT1234'])
+        with patch.object(application,'screen',new_callable=AsyncMock) as screen, patch.object(panel,'low_stock',new_callable=AsyncMock), patch.object(application.qrcode,'make',wraps=application.qrcode.make) as make:
+            await application.coupon(2)
+            await application.coupon(2)
+            self.assertEqual([c.args[0] for c in make.call_args_list],['0Ab12Cd3','0Ab12Cd3'])
+            self.assertEqual([c.kwargs['promo_code'] for c in screen.call_args_list],['0Ab12Cd3','0Ab12Cd3'])
 
     async def test_persistent_keyboard_shortcuts(self):
         for index, text in enumerate(('Главное меню','Админ-панель'), 100):
